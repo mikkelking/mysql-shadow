@@ -1,7 +1,8 @@
 Package.describe({
 	summary: "Clone MySQL database into Mongo and auto replicate collection changes back to MySQL",
-	version: "1.0.10",
-	git: "https://github.com/perak/mysql-shadow.git"
+	version: "1.0.11",
+	name: "mikkelking:mysql-shadow",
+	git: "https://github.com/mikkelking/mysql-shadow.git"
 });
 
 // Before Meteor 0.9?
