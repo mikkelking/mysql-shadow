@@ -76,7 +76,7 @@ CreateMySQLShadow = function(connectionName, options, callback) {
 	}
 
 	var schemaName = connection.config.database;
-	var showTablesQuery = "SELECT k.TABLE_NAME, k.COLUMN_NAME as PRIMARY_KEY FROM information_schema.table_constraints t LEFT JOIN information_schema.key_column_usage k USING(constraint_name,table_schema,table_name) WHERE t.constraint_type='PRIMARY KEY' AND t.table_schema='" + schemaName + "';";
+	var showTablesQuery = "SELECT k.TABLE_NAME, k.COLUMN_NAME as PRIMARY_KEY FROM information_schema.table_constraints t LEFT JOIN information_schema.key_column_usage k USING(constraint_name,table_schema,table_name) WHERE k.TABLE_NAME in ('TASKS','LINKS') and t.constraint_type='PRIMARY KEY' AND t.table_schema='" + schemaName + "';";
 
 	var shadow = {
 		tables: []
@@ -171,6 +171,8 @@ MySQLShadowSyncTable = function(connectionName, tableName, options, callback) {
 
 				if(!mongoRow) {
 					mysqlRow._id = Random.id();
+					console.log("insert "+mysqlRow._id+" mysqlRow=");
+					console.log(mysqlRow);
 					collection.insert(mysqlRow, function(err, inserted) {
 						if(err) {
 							if(callback) {
@@ -182,6 +184,8 @@ MySQLShadowSyncTable = function(connectionName, tableName, options, callback) {
 						}
 					});
 				} else {
+					console.log("update mysqlRow=");
+					console.log(mysqlRow);
 					collection.update(selector, mysqlRow, { upsert: false }, function(err) {
 						if(err) {
 							if(callback) {
@@ -294,6 +298,7 @@ MySQLShadowCollection = function(collection, connectionName, options, callback) 
 
 	var table = _.find(shadow.tables, function(table) { return table.TABLE_NAME == tableName; });
 	if(!table) {
+		console.log(shadow.tables);
 		var err = new Meteor.Error(404, "Unknown table \"" + tableName + "\".");
 		if(callback) {
 			callback(err);
@@ -306,8 +311,8 @@ MySQLShadowCollection = function(collection, connectionName, options, callback) 
 	// after insert hook
 	collection.after.insert(function(userId, doc) {
 		var row = JSON.parse(JSON.stringify(doc));
-
-		if(row._id) delete row._id;
+// We'll use the _id to our advantage
+//		if(row._id) delete row._id;
 
 		var sql = "INSERT INTO " + table.TABLE_NAME + " (";
 		var i = 0;
@@ -333,7 +338,7 @@ MySQLShadowCollection = function(collection, connectionName, options, callback) 
 
 				var value = doc[field];
 				if(_.isDate(value)) {
-					sql = sql + "\'" + dateToMySQLDateLiteral(value) + "\'";
+					sql = sql + "\'ISODate(\"" + dateToMySQLDateLiteral(value) + "\")\'";
 				} else {
 					sql = sql + connection.escape(value);
 				}
@@ -342,15 +347,18 @@ MySQLShadowCollection = function(collection, connectionName, options, callback) 
 			}
 		}
 		sql = sql + ");";
+		console.log("After insert, sql="+sql);
 
 		// insert
 		connection.query(sql, function(err, res) {
 			if(err) {
-				throw new Meteor.Error(500, err.message);				
+				throw new Meteor.Error(500, err.message+" sql="+sql);				
 			}
 
 			// read new record (record is maybe changed by triggers)
 			newRecordSql = "SELECT * FROM " + table.TABLE_NAME + " WHERE " + table.PRIMARY_KEY + " = " + connection.escape(res.insertId) + ";";
+			console.log("Reading record "+res.insertId+","+res._id+" sql="+newRecordSql);
+			console.log(res);
 			connection.query(newRecordSql, function(err, rows) {
 				if(err) {
 					throw new Meteor.Error(500, err.message);				
@@ -360,7 +368,10 @@ MySQLShadowCollection = function(collection, connectionName, options, callback) 
 					var newRow = rows[0];
 					Fiber(function() {
 						// update newly inserted mongo doc
-						collection.update({ _id: doc._id }, { $set: newRow });
+						// Probably don't need to do this!
+						console.log("doc._id="+doc._id);
+						console.log(newRow);
+//						collection.update({ _id: doc._id }, { $set: newRow });
 					}).run();
 				}
 
@@ -397,7 +408,7 @@ MySQLShadowCollection = function(collection, connectionName, options, callback) 
 
 				var value = modifier.$set[field];
 				if(_.isDate(value)) {
-					sql = sql + "\'" + dateToMySQLDateLiteral(value) + "\'";
+					sql = sql + "\'ISODate(\"" + dateToMySQLDateLiteral(value) + "\")\'";
 				} else {
 					sql = sql + connection.escape(value);
 				}
@@ -406,6 +417,7 @@ MySQLShadowCollection = function(collection, connectionName, options, callback) 
 			}
 		}
 		sql = sql + " WHERE " + table.PRIMARY_KEY + " = " + connection.escape(doc[table.PRIMARY_KEY]) + ";";
+		console.log("After update, sql="+sql);
 
 		connection.query(sql, function(err) {
 			if(err) {
@@ -419,6 +431,7 @@ MySQLShadowCollection = function(collection, connectionName, options, callback) 
 	// after remove hook
 	collection.after.remove(function(userId, doc) {
 		var sql = "DELETE FROM " + table.TABLE_NAME + " WHERE " + table.PRIMARY_KEY + " = " + connection.escape(doc[table.PRIMARY_KEY]) + ";";
+		console.log("After delete, sql="+sql);
 		connection.query(sql, function(err) {
 			if(err) {
 				throw new Meteor.Error(500, err.message);				
